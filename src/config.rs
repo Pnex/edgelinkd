@@ -6,7 +6,7 @@ pub fn load_config(cli_args: &CliArgs) -> anyhow::Result<config::Config> {
     // Collect config file paths for logging
     let mut config_files = Vec::new();
     // Load configuration from default, development, and production files
-    let home_dir = dirs_next::home_dir()
+    let home_dir = std::env::home_dir()
         .map(|x| x.join(consts::DEFAULT_HOME_DIR_NAME).to_string_lossy().to_string())
         .expect("Cannot get the `~/home` directory");
 
