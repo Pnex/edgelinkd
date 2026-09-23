@@ -62,7 +62,6 @@ thiserror = "2"
 nom = "^8.0"
 tokio-cron-scheduler = "^0.14"
 bumpalo = "3"
-dirs-next = "2"
 clap = { version = "4", features = ["derive"] }
 itertools = "^0.14"
 arrayvec = "0.7"
@@ -132,7 +131,6 @@ jsonata-core = { version = "2.2", default-features = false }
 
 [dependencies]
 clap.workspace = true
-dirs-next.workspace = true
 anyhow.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["signal"] }

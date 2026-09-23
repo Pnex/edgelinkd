@@ -73,7 +73,7 @@ impl CliArgs {
             let base_dir = if let Some(ref user_dir) = self.user_dir {
                 std::path::PathBuf::from(user_dir)
             } else {
-                dirs_next::home_dir().expect("Can not found the $HOME dir!!!").join(consts::DEFAULT_HOME_DIR_NAME)
+                std::env::home_dir().expect("Can not found the $HOME dir!!!").join(consts::DEFAULT_HOME_DIR_NAME)
             };
             base_dir.join("flows.json").to_string_lossy().to_string()
         }
