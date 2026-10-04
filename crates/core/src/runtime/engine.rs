@@ -112,7 +112,11 @@ impl Engine {
             e
         })?;
 
-        let envs = RedEnvStoreBuilder::default().with_process_env().build();
+        // The process env is never copied into the engine env store: user
+        // code (JS `env.get`, `$env` properties) reads this store, and the
+        // host process carries platform credentials (PNeX SEC-3). Nodes that
+        // need host settings read `std::env` themselves, out of user reach.
+        let envs = RedEnvStoreBuilder::default().build();
 
         let mut ctx_builder = ContextManagerBuilder::new();
         if let Some(ref cfg) = elcfg {
