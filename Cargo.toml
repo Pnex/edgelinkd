@@ -124,7 +124,7 @@ axum = { version = "0.8.4", default-features = false, features = [
     "ws",
     "query",
 ] }
-rumqttc = { version = "0.24" }
+rumqttc = { version = "0.25" }
 # JSONata expression evaluation. `default-features = false` drops the `simd` feature: we
 # convert through serde_json, so simd-json would only add weight to the binary.
 jsonata-core = { version = "2.2", default-features = false }
