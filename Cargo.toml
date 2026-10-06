@@ -63,7 +63,7 @@ nom = "^8.0"
 tokio-cron-scheduler = "^0.14"
 bumpalo = "3"
 clap = { version = "4", features = ["derive"] }
-itertools = "^0.14"
+itertools = "^0.15"
 arrayvec = "0.7"
 smallvec = "1"
 smallstr = { version = "0.3", features = ["serde", "std", "union"] }
