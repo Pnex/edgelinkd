@@ -23,6 +23,37 @@ mod node_class;
 
 const OUTPUT_MSGS_CAP: usize = 4;
 
+// The runtime is shared by every org (SEC-67): a user script must never block
+// it or eat its memory. Same limits as the backend's test/check sandbox.
+const JS_MEMORY_LIMIT: usize = 128 * 1024 * 1024;
+const JS_STACK_LIMIT: usize = 1024 * 1024;
+/// Wall-clock budget of one call (init, one message, finalize); the interrupt
+/// handler aborts the script once it is spent.
+const JS_CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Deadline of the running call, in ms since `base` (0 = no call running).
+struct CallDeadline {
+    base: std::time::Instant,
+    at_ms: std::sync::atomic::AtomicU64,
+}
+
+impl CallDeadline {
+    fn new() -> Arc<Self> {
+        Arc::new(Self { base: std::time::Instant::now(), at_ms: std::sync::atomic::AtomicU64::new(0) })
+    }
+    fn arm(&self) {
+        let at = (self.base.elapsed() + JS_CALL_BUDGET).as_millis() as u64;
+        self.at_ms.store(at.max(1), std::sync::atomic::Ordering::Relaxed);
+    }
+    fn disarm(&self) {
+        self.at_ms.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn expired(&self) -> bool {
+        let at = self.at_ms.load(std::sync::atomic::Ordering::Relaxed);
+        at != 0 && self.base.elapsed().as_millis() as u64 >= at
+    }
+}
+
 type OutputMsgs = smallvec::SmallVec<[(usize, Msg); OUTPUT_MSGS_CAP]>;
 
 #[derive(Deserialize, Debug)]
@@ -67,6 +98,11 @@ impl FlowNodeBehavior for FunctionNode {
         let resolver = js::loader::BuiltinResolver::default();
         let loaders = (js::loader::ScriptLoader::default(), js::loader::ModuleLoader::default());
         js_rt.set_loader(resolver, loaders).await;
+        js_rt.set_memory_limit(JS_MEMORY_LIMIT).await;
+        js_rt.set_max_stack_size(JS_STACK_LIMIT).await;
+        let deadline = CallDeadline::new();
+        let watched = deadline.clone();
+        js_rt.set_interrupt_handler(Some(Box::new(move || watched.expired()))).await;
         js_rt.idle().await;
 
         let js_ctx = js::AsyncContext::full(&js_rt).await.unwrap();
@@ -82,7 +118,10 @@ impl FlowNodeBehavior for FunctionNode {
             }
             while ctx.execute_pending_job() {}
 
-            if let Err(e) = cloned_this.init_async(ctx.clone()).await {
+            deadline.arm();
+            let init = cloned_this.init_async(ctx.clone()).await;
+            deadline.disarm();
+            if let Err(e) = init {
                 // It's a fatal error
                 log::error!("[function:{}] Fatal error! Failed to initialize JavaScript environment: {:?}", cloned_this.name(), e);
 
@@ -96,11 +135,15 @@ impl FlowNodeBehavior for FunctionNode {
                 let sub_ctx = ctx.clone();
                 let cancel = stop_token.child_token();
                 let this_node = cloned_this.clone();
+                let msg_deadline = deadline.clone();
                 with_uow(this_node.clone().as_ref(), cancel.child_token(), |_, msg| async move {
                     let res = {
                         let msg_guard = msg.write().await;
+                        msg_deadline.arm();
                         // This gonna eat the msg and produce a new one
-                        this_node.filter_msg(sub_ctx.clone(), msg_guard.clone()).await
+                        let res = this_node.filter_msg(sub_ctx.clone(), msg_guard.clone()).await;
+                        msg_deadline.disarm();
+                        res
                     };
                     match res {
                         Ok(changed_msgs) => {
@@ -121,10 +164,16 @@ impl FlowNodeBehavior for FunctionNode {
                     Ok(())
                 })
                 .await;
+                // Promise jobs left by the message run under the same budget.
+                deadline.arm();
                 while ctx.execute_pending_job() {}
+                deadline.disarm();
             }
 
-            if let Err(e) = cloned_this.finalize_async(ctx.clone()).await {
+            deadline.arm();
+            let finalized = cloned_this.finalize_async(ctx.clone()).await;
+            deadline.disarm();
+            if let Err(e) = finalized {
                 log::error!("[function:{}] Fatal error! Failed to finalize JavaScript environment: {:?}", cloned_this.name(), e);
             }
             while ctx.execute_pending_job() {}
