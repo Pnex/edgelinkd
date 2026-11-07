@@ -7,7 +7,7 @@ build = "build.rs"
 [dependencies]
 inventory.workspace = true
 axum.workspace = true
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6.8", features = ["fs", "cors"] }
 
 tokio = { workspace = true, features = ["full"] }

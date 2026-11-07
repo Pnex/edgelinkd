@@ -245,7 +245,7 @@ impl XmlNode {
                     if let Some(Variant::Object(attrs)) = inner_obj.get(&options.attrkey) {
                         for (attr_name, attr_value) in attrs {
                             let attr_val = self.variant_to_xml_text(attr_value);
-                            start_elem.push_attribute((attr_name.as_bytes(), attr_val.as_bytes()));
+                            start_elem.push_attribute((attr_name.as_str(), attr_val.as_str()));
                         }
                     }
                     writer
@@ -349,7 +349,7 @@ fn xml_to_variant(xml_string: &str, options: &Xml2jsOptions) -> crate::Result<Va
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag = e.name().as_ref().to_string();
                 if root_tag.is_none() {
                     root_tag = Some(tag.clone());
                 }
@@ -370,14 +370,12 @@ fn xml_to_variant(xml_string: &str, options: &Xml2jsOptions) -> crate::Result<Va
             }
 
             Ok(Event::Text(e)) => {
-                // quick-xml 0.38 removed `BytesText::unescape()`; decoding and
-                // unescaping are now two separate steps.
-                let decoded = e.decode().unwrap_or_default();
-                text_buf.push_str(&quick_xml::escape::unescape(&decoded).unwrap_or_default());
+                // Since quick-xml 0.42 the event derefs to the (still escaped) text.
+                text_buf.push_str(&quick_xml::escape::unescape(&e).unwrap_or_default());
             }
 
             Ok(Event::End(ref e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag = e.name().as_ref().to_string();
                 let (open_tag, mut obj) = stack.pop().unwrap();
 
                 if open_tag != tag {
@@ -429,7 +427,9 @@ fn xml_to_variant(xml_string: &str, options: &Xml2jsOptions) -> crate::Result<Va
 fn attributes_to_map(e: &BytesStart, _options: &Xml2jsOptions) -> crate::Result<VariantObjectMap> {
     let mut attrs = VariantObjectMap::new();
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+        let key = attr.key.as_ref().to_string();
+        // Not `normalized_value()`: xml2js keeps attribute whitespace as written.
+        #[allow(deprecated)]
         let val = attr.unescape_value().unwrap_or_default().to_string();
         attrs.insert(key, Variant::String(val));
     }
