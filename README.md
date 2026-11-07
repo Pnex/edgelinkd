@@ -9,7 +9,7 @@
 [GitHub Release]: https://img.shields.io/github/v/release/oldrev/edgelinkd?include_prereleases
 [releases]: https://github.com/oldrev/edgelinkd/releases
 [GitHub Downloads]: https://img.shields.io/github/downloads/oldrev/edgelinkd/total
-![Node-RED Rust Backend](assets/banner.jpg)
+![Node-RED Rust Backend](assets/banner.png)
 
 English | [简中](README.zh-cn.md)
 
@@ -171,7 +171,7 @@ port = 1888
 
 ## Project Status
 
-**Alpha Stage**: The project is currently in the *alpha* stage and cannot guarantee stable operation.
+**Release 4.1.16**: This release is based on Node-RED v4.1.16 and includes the integrated editor and Rust runtime.
 
 **New: Integrated Web UI**: EdgeLinkd now includes a complete Node-RED web interface for flow design and management. The web UI is fully compatible with Node-RED's editor and provides the same user experience while running on the high-performance Rust runtime.
 
@@ -185,107 +185,20 @@ port = 1888
 - ✅ Settings and configuration management
 - ✅ Import/Export flows functionality
 
-The heavy check mark ( :heavy_check_mark: ) below indicates that this feature has passed the integration test ported from Node-RED.
+The heavy check mark ( :heavy_check_mark: ) below indicates that the supported behavior has passed the ported Node-RED integration tests. A checked node can still have deliberately scoped gaps; use the [live Node-RED spec coverage page](https://oldrev.github.io/edgelinkd/en/specs/) for detailed results.
 
-### Node-RED Features Roadmap:
+The [live Node-RED spec coverage page](https://oldrev.github.io/edgelinkd/en/specs/) lets you compare the latest `master` report with published releases and search individual tests.
 
-- [x] :heavy_check_mark: Flow
-- [x] :heavy_check_mark: Sub-flow
-- [x] Group
-- [x] :heavy_check_mark: Environment Variables
-- [x] Context
-    - [x] Memory storage
-    - [x] Local file-system storage
-- [x] :heavy_check_mark: RED.util
-    - [x] The whole `@node-red/util` surface on the function node sandbox object
-      (`getMessageProperty`/`setMessageProperty`, `evaluateNodeProperty`,
-      `normalisePropertyExpression`, `normaliseNodeTypeName`, `compareObjects`,
-      `ensureString`/`ensureBuffer`, `parseContextStore`, `getSetting`, `encodeObject`, ...),
-      covered by the ported upstream spec in `tests/util/test_util.py`
-    - [ ] `ensureBuffer()` returns a `Uint8Array`: the sandbox has no Node.js `Buffer`
-    - [ ] `prepareJSONataExpression()` / `evaluateJSONataExpression()` fail with `NOT_SUPPORTED`:
-      JSONata is implemented by the Rust runtime and is not exposed to JavaScript
-    - [ ] `evaluateNodeProperty(v, "date")` with a format string fails with `NOT_SUPPORTED`:
-      the sandbox has no `moment` to format with
-- [x] Plug-in subsystem[^1]
-- [x] JSONata (via the pure-Rust `jsonata-core` engine)
-    - [x] `$flowContext()`, `$globalContext()`, `$env()`, `$clone()`, `$I`/`$N` bindings
-    - [x] `change` / `switch` / `inject` properties, and environment variables
-    - [ ] `$moment()` — an expression calling it fails with an error instead of a value
+### Node-RED test status
 
-[^1]: Rust's Tokio async functions cannot call into dynamic libraries, so currently, we can only use statically linked plugins. I will evaluate the possibility of adding plugins based on WebAssembly (WASM) or JavaScript (JS) in the future.
+![REDNODES-SPECS-DIFF.svg](tests/REDNODES-SPECS-DIFF.svg)
 
-### The Current Status of Nodes:
+Regenerate the report and chart with:
 
-Refer [REDNODES-SPECS-DIFF.md](tests/REDNODES-SPECS-DIFF.md) to view the details of the currently implemented nodes that comply with the Node-RED specification tests.
-
-- Core nodes:
-    - Common nodes:
-        - [x] :heavy_check_mark: Console-JSON (For integration tests)
-        - [x] :heavy_check_mark: Inject
-        - [x] Debug (WIP)
-        - [x] :heavy_check_mark: Complete
-        - [x] :heavy_check_mark: Catch
-        - [x] :heavy_check_mark: Status
-        - [x] :heavy_check_mark: Link In
-        - [x] :heavy_check_mark: Link Call
-        - [x] :heavy_check_mark: Link Out
-        - [x] :heavy_check_mark: Comment (Ignored automatically)
-        - [x] GlobalConfig (WIP)
-        - [x] :heavy_check_mark: Unknown
-        - [x] :heavy_check_mark: Junction
-    - Function nodes:
-        - [x] Function (WIP)
-            - [x] Basic functions
-            - [x] `node` object (WIP)
-            - [x] `context` object
-            - [x] `flow` object
-            - [x] `global` object
-            - [x] `RED.util` object
-            - [x] `env` object
-        - [x] :heavy_check_mark: Switch
-        - [x] :heavy_check_mark: Change
-        - [x] :heavy_check_mark: Range
-        - [x] :heavy_check_mark: Template
-        - [x] Delay
-        - [x] Trigger
-        - [x] Exec
-        - [x] :heavy_check_mark: Filter (RBE)
-    - Network nodes:
-        - [x] MQTT In
-        - [x] MQTT Out
-        - [ ] MQTT Broker
-        - [x] HTTP In
-        - [x] HTTP Out
-        - [x] HTTP Request
-        - [x] WebSocket Listener
-        - [x] WebSocket Client
-        - [x] WebSocket In
-        - [x] WebSocket Out
-        - [x] TCP In
-        - [x] TCP Out
-        - [x] TCP Get
-        - [x] UDP In
-        - [x] :heavy_check_mark: UDP Out
-            - [x] Unicast
-            - [x] Multicast
-        - [x] TLS (WIP)
-        - [x] HTTP Proxy (WIP)
-    - Sqeuence nodes:
-        - [x] Split
-        - [x] Join
-        - [x] Sort
-        - [x] Batch
-    - Parse nodes:
-        - [x] CSV
-        - [ ] HTML
-        - [x] :heavy_check_mark: JSON
-        - [x] :heavy_check_mark: XML
-        - [x] YAML
-    - Storage
-        - [x] File
-        - [x] File In
-        - [x] Watch
+```console
+python scripts/specs_diff.py 3rd-party/node-red \
+  --svg-output tests/REDNODES-SPECS-DIFF.svg
+```
 
 ## Roadmap
 
@@ -322,11 +235,22 @@ Please refer to [ISSUES.md](docs/ISSUES.md) for a list of known issues and worka
 
 We welcome your feedback! If you encounter any issues or have suggestions, please open an [issue](https://github.com/edge-link/edgelinkd/issues).
 
-* Contact me: E-mail: oldrev(at)gmail.com
-* Discord: [https://discord.gg/XJstgANe26](https://discord.gg/XJstgANe26)
+- Website: https://oldrev.github.io/edgelinkd
+- Contact me: E-mail: oldrev@gmail.com
+- Discord: [https://discord.gg/XJstgANe26](https://discord.gg/XJstgANe26)
 
 ## License
 
 This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for more details.
 
 Copyright © Li Wei and other contributors. All rights reserved.
+
+This project is a Rust reimplementation of Node-RED
+(https://nodered.org/), which is developed by the OpenJS Foundation
+and licensed under the Apache License, Version 2.0.
+
+This project includes software developed at The OpenJS Foundation (https://openjsf.org/).
+
+## AI-assisted development disclosure
+
+The engine and runtime kernel were developed by the author. LLM tools assisted with the implementation of peripheral nodes; those changes remain subject to human review and tests.

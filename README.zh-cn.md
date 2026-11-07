@@ -7,7 +7,7 @@
 [Build Status]: https://img.shields.io/github/actions/workflow/status/oldrev/edgelinkd/CICD.yml?branch=master
 [actions]: https://github.com/oldrev/edgelinkd/actions?query=branch%3Amaster
 
-![Node-RED Rust Backend](assets/banner.jpg)
+![Node-RED Rust Backend](assets/banner.png)
 
 [English](README.md) | 简中
 
@@ -140,7 +140,7 @@ py.test
 
 ## 项目状态
 
-**Alpha**：项目当前处于发布前活跃开发阶段，不保证任何稳定性。
+**4.1.16 正式版**：此版本基于 Node-RED v4.1.16，包含集成编辑器和 Rust 运行时。
 
 **Web UI 功能**：
 - ✅ 完整的 Node-RED 编辑器界面
@@ -152,7 +152,9 @@ py.test
 - ✅ 设置和配置管理
 - ✅ 流程导入/导出功能
 
-参考 [REDNODES-SPECS-DIFF.md](tests/REDNODES-SPECS-DIFF.md) 查看目前项目已实现节点和 Node-RED 的规格测试对比。
+详细的节点和 Node-RED 规范测试对比请查看[在线 Node-RED 规范覆盖率页面](https://oldrev.github.io/edgelinkd/zh/specs/)。
+
+也可以访问[在线 Node-RED 规范覆盖率页面](https://oldrev.github.io/edgelinkd/zh/specs/)，比较 master 与各个发布版本并搜索单条测试。
 
 ## 开发路线图
 
@@ -180,7 +182,8 @@ py.test
 
 ### 联系作者
 
-- 邮箱：oldrev(at)gmail.com
+- 官方网站：https://oldrev.github.io/edgelinkd
+- 邮箱：oldrev@gmail.com
 - QQ：55431671
 
 > 超巨型广告：没事儿时可以承接网站前端开发/管理系统开发/PCB 画板打样/单片机开发/压水晶头/中老年陪聊/工地打灰等软硬件项目。
@@ -189,4 +192,14 @@ py.test
 
 此项目基于 Apache 2.0 许可证 - 详见 [LICENSE](LICENSE) 文件以获取更多详细信息。
 
-版权所啊 © 李维及其他贡献者，保留所有权利。
+版权所有 © 李维及其他贡献者，保留所有权利。
+
+本项目是 Node-RED（https://nodered.org/）的 Rust 重实现。
+Node-RED 由 OpenJS 基金会开发，依据 Apache License 2.0 授权。
+
+此项目包含 OpenJS 基金会 (https://openjsf.org/) 开发的软件。
+
+
+## LLM/AI 辅助开发声明
+
+引擎与运行时内核由作者手工开发。外围节点的实现使用了 LLM 工具辅助，并经过人工审阅与测试。

@@ -1,0 +1,74 @@
+# Node support matrix (language-neutral). Group titles come from i18n
+# (group_<id>), status labels from i18n (status_<status>).
+#
+#   verified — passes the integration tests ported from Node-RED
+#   available — implemented and usable, with known upstream-spec gaps
+#   progress — still being implemented or not ready for general use
+#
+# Keep in sync with the README and the live spec coverage page.
+
+report: "/edgelinkd/en/specs/"
+
+groups:
+  - id: "common"
+    nodes:
+      - { name: "inject", status: "verified" }
+      - { name: "debug", status: "verified" }
+      - { name: "complete", status: "verified" }
+      - { name: "catch", status: "verified" }
+      - { name: "status", status: "verified" }
+      - { name: "link in", status: "verified" }
+      - { name: "link call", status: "verified" }
+      - { name: "link out", status: "verified" }
+      - { name: "comment", status: "verified" }
+      - { name: "junction", status: "verified" }
+      - { name: "unknown", status: "verified" }
+      - { name: "global-config", status: "verified" }
+  - id: "function"
+    nodes:
+      - { name: "function", status: "available" }
+      - { name: "switch", status: "verified" }
+      - { name: "change", status: "verified" }
+      - { name: "range", status: "verified" }
+      - { name: "template", status: "verified" }
+      - { name: "filter (rbe)", status: "verified" }
+      - { name: "delay", status: "verified" }
+      - { name: "trigger", status: "verified" }
+      - { name: "exec", status: "verified" }
+  - id: "network"
+    nodes:
+      - { name: "mqtt in", status: "available" }
+      - { name: "mqtt out", status: "available" }
+      - { name: "mqtt broker", status: "available" }
+      - { name: "http in", status: "available" }
+      - { name: "http out", status: "available" }
+      - { name: "http request", status: "available" }
+      - { name: "websocket listener", status: "available" }
+      - { name: "websocket client", status: "available" }
+      - { name: "websocket in", status: "available" }
+      - { name: "websocket out", status: "available" }
+      - { name: "tcp in", status: "available" }
+      - { name: "tcp out", status: "available" }
+      - { name: "tcp get", status: "available" }
+      - { name: "udp in", status: "available" }
+      - { name: "udp out", status: "verified" }
+      - { name: "tls", status: "available" }
+      - { name: "http proxy", status: "available" }
+  - id: "sequence"
+    nodes:
+      - { name: "split", status: "available" }
+      - { name: "join", status: "available" }
+      - { name: "sort", status: "available" }
+      - { name: "batch", status: "available" }
+  - id: "parser"
+    nodes:
+      - { name: "json", status: "verified" }
+      - { name: "xml", status: "verified" }
+      - { name: "csv", status: "verified" }
+      - { name: "html", status: "verified" }
+      - { name: "yaml", status: "verified" }
+  - id: "storage"
+    nodes:
+      - { name: "file", status: "verified" }
+      - { name: "file in", status: "available" }
+      - { name: "watch", status: "available" }

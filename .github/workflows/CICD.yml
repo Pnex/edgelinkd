@@ -7,12 +7,15 @@ on:
       - master
       - dev
       - 'dev-*'
+    tags:
+      - 'v*'
     paths:
       - '.github/workflows/**'
       - 'src/**'
       - 'tests/**'
       - 'crates/**'
       - 'node-plugins/**'
+      - 'scripts/**'
       - '3rd-party/node-red/**'
       - '*.rs'
       - '*.toml'
@@ -27,6 +30,7 @@ on:
       - 'tests/**'
       - 'crates/**'
       - 'node-plugins/**'
+      - 'scripts/**'
       - '3rd-party/node-red/**'
       - '*.rs'
       - '*.toml'
@@ -50,6 +54,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -64,6 +70,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/check-release-version.py "$RELEASE_TAG"
+
       - name: Cargo metadata (fail fast on dependency errors)
         run: cargo metadata --locked --format-version=1
       - name: Check code formatting
@@ -232,6 +244,93 @@ jobs:
           EDGELINK_BUILD_PROFILE: ci
         run: pytest ./tests -v
 
+      - name: Generate Node-RED spec coverage JSON
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          EDGELINK_BUILD_TARGET: ${{ matrix.target }}
+          EDGELINK_BUILD_PROFILE: ci
+        run: |
+          python ./scripts/specs_diff.py 3rd-party/node-red \
+            --json-output ./specs-report.json \
+            --label "${{ github.ref_name }}" \
+            --commit "${{ github.sha }}" \
+            --no-fail
+
+      - name: Upload Node-RED spec coverage report
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-red-spec-report
+          path: specs-report.json
+          if-no-files-found: error
+
+  publish-spec-coverage:
+    name: Publish Node-RED spec coverage
+    needs: build-and-test-linux
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: specs-data-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: node-red-spec-report
+          path: report
+
+      - name: Publish report to specs-data branch
+        env:
+          REPORT_NAME: ${{ github.ref == 'refs/heads/master' && 'master' || github.ref_name }}
+          REPORT_REF: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin specs-data || true
+          if git show-ref --verify --quiet refs/remotes/origin/specs-data; then
+            git checkout -B specs-data origin/specs-data
+          else
+            git checkout --orphan specs-data
+            git rm -rf .
+          fi
+          mkdir -p reports
+          cp report/specs-report.json "reports/${REPORT_NAME}.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_name = os.environ["REPORT_NAME"]
+          report = json.loads(Path(f"reports/{report_name}.json").read_text(encoding="utf-8"))
+          index_path = Path("index.json")
+          entries = {}
+          if index_path.exists():
+              for item in json.loads(index_path.read_text(encoding="utf-8")).get("reports", []):
+                  entries[item["name"]] = item
+          entries[report_name] = {
+              "name": report_name,
+              "ref": report.get("ref"),
+              "commit": report.get("commit"),
+              "generated_at": report.get("generated_at"),
+              "url": f"reports/{report_name}.json",
+              "totals": report.get("totals", {}),
+          }
+          ordered = sorted(entries.values(), key=lambda item: item.get("generated_at") or "", reverse=True)
+          index_path.write_text(json.dumps({"schema_version": 1, "reports": ordered}, indent=2) + "\n", encoding="utf-8")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.json reports
+          git diff --cached --quiet && exit 0
+          git commit -m "Publish Node-RED spec coverage for ${REPORT_REF}"
+          git push origin specs-data
+
   build-and-test-on-arm-linux:
     name: Build and Test on ARM Linux
     needs: fmt-and-check
@@ -280,7 +379,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: 3rd-party/node-red/package-lock.json
 
@@ -291,10 +390,10 @@ jobs:
           key: ${{ runner.os }}-node-modules-${{ hashFiles('3rd-party/node-red/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-modules-
-
-
-      # - name: Install dependencies
-      #   run: sudo apt-get -y install qemu-user qemu-user-static
+      - name: Install QEMU user emulators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
 
       - name: Setup cross-compilation tools for ARM 64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -302,9 +401,7 @@ jobs:
           echo "EDGELINK_TOOLCHAIN_TRIPLE=aarch64-linux-gnu" >> $GITHUB_ENV
           echo "EDGELINK_QEMU_CMD=qemu-aarch64-static" >> $GITHUB_ENV
           echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-      #     sudo apt-get update
-      #     sudo apt-get install -y gcc-aarch64-linux-gnu libc-dev-arm64-cross libssl-dev:arm64
-      #     echo "OPENSSL_DIR=/usr/lib/aarch64-linux-gnu" >> $GITHUB_ENV
+          sudo apt-get install -y libc6-arm64-cross
 
       - name: Setup cross-compilation tools for ARM 32 (gnueabihf)
         if: matrix.target == 'armv7-unknown-linux-gnueabihf'
@@ -312,9 +409,7 @@ jobs:
           echo "EDGELINK_TOOLCHAIN_TRIPLE=arm-linux-gnueabihf" >> $GITHUB_ENV
           echo "EDGELINK_QEMU_CMD=qemu-arm-static" >> $GITHUB_ENV
           echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-      #     sudo apt-get update
-      #     sudo apt-get install -y gcc-arm-linux-gnueabihf libc-dev-armhf-cross libssl-dev:armhf
-      #     echo "OPENSSL_DIR=/usr/lib/arm-linux-gnueabihf" >> $GITHUB_ENV
+          sudo apt-get install -y libc6-armhf-cross
 
       - name: Setup cross-compilation tools for ARM 32 (gnueabi)
         if: matrix.target == 'armv7-unknown-linux-gnueabi'
@@ -322,12 +417,16 @@ jobs:
           echo "EDGELINK_TOOLCHAIN_TRIPLE=arm-linux-gnueabi" >> $GITHUB_ENV
           echo "EDGELINK_QEMU_CMD=qemu-arm-static" >> $GITHUB_ENV
           echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-      #     sudo apt-get update
-      #     sudo apt-get install -y gcc-arm-linux-gnueabi libc-dev-armel-cross libssl-dev:armel
-      #     echo "OPENSSL_DIR=/usr/lib/arm-linux-gnueabi" >> $GITHUB_ENV
+          sudo apt-get install -y libc6-armel-cross
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build Node-RED editor on host
+        working-directory: 3rd-party/node-red
+        run: |
+          npm install
+          npm run build
 
       - name: Cross build
         run: cross build --workspace --profile ci --target ${{ matrix.target }} --features full --exclude edgelink-pymod
@@ -336,7 +435,7 @@ jobs:
         run: cross test --workspace --profile ci --target ${{ matrix.target }} --features full --exclude edgelink-pymod --no-run --message-format=json | tee ./target/${{ matrix.target }}/ci/cargo-build-test.json
 
       - name: Run unit tests in QEMU ARM
-        run: python3 ./scripts/cross-unittest.py ${{ env.EDGELINK_QEMU_CMD }}  ${{ env.EDGELINK_TOOLCHAIN_TRIPLE }} ./target/${{ matrix.target }}/ci/cargo-build-test.json
+        run: python3 ./scripts/cross-unittest.py ${{ env.EDGELINK_QEMU_CMD }} ${{ env.EDGELINK_TOOLCHAIN_TRIPLE }} ./target/${{ matrix.target }}/ci/cargo-build-test.json --target-triple ${{ matrix.target }}
         env:
           EDGELINK_TOOLCHAIN_TRIPLE: ${{ env.EDGELINK_TOOLCHAIN_TRIPLE }}
           EDGELINK_QEMU_CMD: ${{ env.EDGELINK_QEMU_CMD }}
@@ -348,6 +447,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -428,14 +529,148 @@ jobs:
             Built on: ${{ steps.date.outputs.date }}
           files: build-out/edgelinkd-dist-x86_64-pc-windows-msvc-nightly-*.zip
           prerelease: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Delete old nightly releases (keep 10 builds)
-        uses: dev-drprasad/delete-older-releases@v0.3.3
+  release-build-and-release:
+    name: Build & Release (Windows)
+    needs: [fmt-and-check, clippy, build-and-test-linux]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          keep_latest: 10
-          delete_tags: true
-          delete_prerelease_only: true
+          submodules: recursive
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-pc-windows-msvc
+          override: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build Node-RED editor on host
+        working-directory: 3rd-party/node-red
+        run: |
+          npm install
+          npm run build
+
+      - name: Build release binary
+        run: cargo build --release --workspace --target x86_64-pc-windows-msvc
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          EDGELINK_VERSION: ${{ github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install packaging dependencies
+        run: pip install tomlkit
+
+      - name: Package release build
+        run: python ./scripts/dist-pack.py --branch tag --version "${{ github.ref_name }}" --mode release --target x86_64-pc-windows-msvc
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EdgeLinkd ${{ github.ref_name }}
+          body: |
+            EdgeLinkd release ${{ github.ref_name }}.
+            Built from tag ${{ github.ref_name }} at ${{ github.sha }}.
+          files: build-out/edgelinkd-dist-x86_64-pc-windows-msvc-*.zip
+          prerelease: ${{ contains(github.ref_name, '-beta.') }}
+          overwrite_files: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-linux-build-and-release:
+    name: Build & Release (Linux ${{ matrix.target }})
+    needs: [fmt-and-check, clippy, build-and-test-linux]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+          - armv7-unknown-linux-gnueabi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build Node-RED editor on host
+        working-directory: 3rd-party/node-red
+        run: |
+          npm install
+          npm run build
+
+      - name: Install cross
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build native Linux release
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo build --release --workspace --target ${{ matrix.target }} --features full
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          EDGELINK_VERSION: ${{ github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build ARM Linux release
+        if: matrix.target != 'x86_64-unknown-linux-gnu'
+        run: cross build --release --workspace --target ${{ matrix.target }} --features full --exclude edgelink-pymod
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
+      - name: Install packaging dependencies
+        run: pip install tomlkit
+
+      - name: Package Linux release build
+        run: python ./scripts/dist-pack.py --branch tag --version "${{ github.ref_name }}" --mode release --target ${{ matrix.target }}
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
+      - name: Upload Linux package
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EdgeLinkd ${{ github.ref_name }}
+          body: |
+            EdgeLinkd release ${{ github.ref_name }}.
+            Built from tag ${{ github.ref_name }} at ${{ github.sha }}.
+          files: build-out/edgelinkd-dist-${{ matrix.target }}-*.tar.gz
+          prerelease: ${{ contains(github.ref_name, '-beta.') }}
+          overwrite_files: true
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

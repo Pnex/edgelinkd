@@ -87,6 +87,24 @@ To set up your development environment, follow these steps:
 - **Write clear and concise code**. Comment your code where necessary.
 - **Write tests** for your code and ensure all tests pass before submitting a pull request.
 
+## Releases
+
+The Cargo workspace version matches the release tag without its leading `v`. Stable
+releases use semantic versions such as `4.1.16`; beta releases use a numbered suffix,
+such as `4.1.17-beta.1`. Update `Cargo.toml`, let Cargo update `Cargo.lock`, and create
+a new matching tag. Never move an already published tag. CI rejects tags that do not
+match the manifest.
+
+Each tag has its own GitHub Release. Asset names contain the target and release
+version; rerunning a release replaces the same assets. The executable reports CI
+build metadata as `+<run_number>.<run_attempt>`, along with its commit and build time.
+Linux CI builds the editor on the host before cross compilation, and packaging
+requires both the executable and the editor's main assets.
+
+After a successful CICD run, the website refreshes its release data. It selects the
+highest stable version with packages for all five supported targets, falling back to
+the highest beta version when no complete stable release is available.
+
 ## Commit Guidelines
 
 - Use the present tense ("Add feature" not "Added feature").

@@ -80,7 +80,8 @@ def main():
         ],
         help="Target triple: x86_64-pc-windows-msvc, x86_64-pc-windows-gnu, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, armv7-unknown-linux-gnueabihf, armv7-unknown-linux-gnueabi"
     )
-    parser.add_argument("--branch", default="master", choices=["dev", "master"], help="Branch to package")
+    parser.add_argument("--branch", default="master", choices=["dev", "master", "tag"], help="Packaging channel")
+    parser.add_argument("--version", default=None, help="Release version used in the package name")
     parser.add_argument("--mode", default="release", choices=["release", "debug"], help="Build mode")
     parser.add_argument(
         "--outdir",
@@ -92,11 +93,18 @@ def main():
     # 1. Get packaging time and branch
     dt_str = get_latest_commit_datetime()
     is_nightly = args.branch == "dev"
+    is_beta = args.branch == "tag"
     # Determine archive format by target
     is_windows = args.target.startswith("x86_64-pc-windows") or args.target.startswith("x86_64-pc-windows-gnu")
     is_linux = "linux" in args.target
     if is_nightly:
         base_name = f"edgelinkd-dist-{args.target}-nightly-{dt_str}"
+    elif is_beta:
+        with (ROOT / "Cargo.toml").open(encoding="utf-8") as manifest:
+            version = tomlkit.load(manifest)["workspace"]["package"]["version"]
+        if args.version and args.version.removeprefix("v") != version:
+            parser.error(f"Release version must match Cargo.toml: {version}")
+        base_name = f"edgelinkd-dist-{args.target}-{version}"
     else:
         base_name = f"edgelinkd-dist-{args.target}-{dt_str}"
     if is_windows:
@@ -122,8 +130,10 @@ def main():
             bin_dir.mkdir()
             # Executable and DLLs
             target_dir = ROOT / "target" / args.target / args.mode
-            for f in target_dir.glob("edgelinkd.exe"):
-                shutil.copy(f, bin_dir / f.name)
+            executable = target_dir / ("edgelinkd.exe" if is_windows else "edgelinkd")
+            if not executable.is_file():
+                raise FileNotFoundError(f"Missing executable: {executable}")
+            shutil.copy(executable, bin_dir / executable.name)
             for dll in target_dir.glob("*.dll"):
                 if any(dll.name.startswith(prefix) for prefix in EXCLUDE_PREFIXES):
                     continue
@@ -131,6 +141,9 @@ def main():
 
             # 5. bin/ui_static
             ui_static_src = ROOT / "target" / "ui_static"
+            for resource in ("index.html", "red/red.min.js", "red/main.min.js", "red/style.min.css", "vendor/vendor.js"):
+                if not (ui_static_src / resource).is_file():
+                    raise FileNotFoundError(f"Missing editor resource: {ui_static_src / resource}")
             if ui_static_src.exists():
                 print(f"Copying ui_static from {ui_static_src} to {bin_dir / 'ui_static'}", file=sys.stderr)
                 copytree(ui_static_src, bin_dir / "ui_static")

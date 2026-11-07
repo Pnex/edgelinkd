@@ -63,7 +63,18 @@ impl RangeNode {
         config: &RedFlowNodeConfig,
         _options: Option<&config::Config>,
     ) -> crate::Result<Box<dyn FlowNodeBehavior>> {
-        let range_config = RangeNodeConfig::deserialize(&config.rest)?;
+        let mut range_config = RangeNodeConfig::deserialize(&config.rest)?;
+        // Match Node-RED's constructor normalization: reversed input ranges also
+        // reverse the output range, and rounded output endpoints are constrained
+        // before the mapped value is rounded.
+        if range_config.minin > range_config.maxin {
+            std::mem::swap(&mut range_config.minin, &mut range_config.maxin);
+            std::mem::swap(&mut range_config.minout, &mut range_config.maxout);
+        }
+        if range_config.round {
+            range_config.minout = range_config.minout.ceil();
+            range_config.maxout = range_config.maxout.floor();
+        }
         let node = RangeNode { base: base_node, config: range_config };
         Ok(Box::new(node))
     }
@@ -76,7 +87,7 @@ impl RangeNode {
                     .ok_or(EdgelinkError::OutOfRange)
                     .with_context(|| format!("Cannot convert the number `{num_value}` to float"))?,
                 Variant::String(s) => s.parse::<f64>()?,
-                _ => f64::NAN,
+                _ => <f64>::NAN,
             };
 
             if !n.is_nan() {

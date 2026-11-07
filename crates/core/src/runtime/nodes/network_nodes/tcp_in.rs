@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -122,7 +122,7 @@ impl TcpInNode {
         MsgHandle::with_properties(body)
     }
 
-    async fn handle_connection(&self, mut stream: TcpStream, session_id: String, stop_token: CancellationToken) {
+    async fn handle_connection(&self, stream: TcpStream, session_id: String, stop_token: CancellationToken) {
         let remote_addr = match stream.peer_addr() {
             Ok(addr) => addr,
             Err(e) => {
@@ -133,8 +133,32 @@ impl TcpInNode {
 
         log::info!("TCP in: New connection from {remote_addr}");
 
+        let Some(engine) = self.engine() else { return };
+        let cancel = stop_token.child_token();
+        let (sender, mut writes) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+        let session = Arc::new(super::tcp_session::TcpSession { sender, cancel: cancel.clone() });
+        if let Err(error) = engine.request_sessions().register(session_id.clone(), session) {
+            log::error!("TCP session registration failed: {error}");
+            return;
+        }
+        let _registration = engine.request_sessions().registration(session_id.clone());
+        let (read, mut write) = stream.into_split();
+        let mut reader = BufReader::new(read);
         let mut buffer = Vec::new();
-        let mut reader = BufReader::new(&mut stream);
+        let writer_cancel = cancel.clone();
+        let writer = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = writer_cancel.cancelled() => break,
+                    data = writes.recv() => match data {
+                        Some(data) => if write.write_all(&data).await.is_err() { break; },
+                        None => break,
+                    }
+                }
+            }
+            writer_cancel.cancel();
+        });
+        let stop_token = cancel;
 
         loop {
             tokio::select! {
@@ -169,16 +193,17 @@ impl TcpInNode {
 
         // Send any remaining buffer data if in single mode
         if matches!(self.config.datamode, DataMode::Single) && !buffer.is_empty() {
-            let msg = self.create_message(&buffer, remote_addr, session_id).await;
+            let msg = self.create_message(&buffer, remote_addr, session_id.clone()).await;
             if let Err(e) = self.fan_out_one(Envelope { port: 0, msg }, stop_token).await {
                 log::error!("TCP in: Failed to send final message: {e}");
             }
         }
+        writer.abort();
     }
 
     async fn read_data(
         &self,
-        reader: &mut BufReader<&mut TcpStream>,
+        reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
         buffer: &mut Vec<u8>,
     ) -> Result<Option<Vec<u8>>, std::io::Error> {
         match self.config.datamode {
@@ -187,20 +212,27 @@ impl TcpInNode {
                     && !newline.is_empty()
                     && matches!(self.config.datatype, DataType::Utf8)
                 {
-                    // Read line by line for UTF-8 with newline separator
-                    let mut line = String::new();
-                    let bytes_read = reader.read_line(&mut line).await?;
-                    if bytes_read == 0 {
-                        return Ok(None); // EOF
-                    }
-
-                    if !self.config.trim {
-                        // Keep the newline if trim is false
-                        return Ok(Some(line.into_bytes()));
-                    } else {
-                        // Remove the newline if trim is true
-                        line = line.trim_end_matches(['\r', '\n']).to_string();
-                        return Ok(Some(line.into_bytes()));
+                    let delimiter = newline.as_bytes();
+                    loop {
+                        if let Some(index) = buffer.windows(delimiter.len()).position(|part| part == delimiter) {
+                            let end = index + delimiter.len();
+                            let mut message = buffer.drain(..end).collect::<Vec<_>>();
+                            message.truncate(index);
+                            if self.config.trim && delimiter.len() > 1 {
+                                message.extend_from_slice(delimiter);
+                            }
+                            return Ok(Some(message));
+                        }
+                        let mut temp_buf = [0u8; 4096];
+                        let bytes_read = reader.read(&mut temp_buf).await?;
+                        if bytes_read == 0 {
+                            return if buffer.is_empty() { Ok(None) } else { Ok(Some(std::mem::take(buffer))) };
+                        }
+                        let had_pending = !buffer.is_empty();
+                        buffer.extend_from_slice(&temp_buf[..bytes_read]);
+                        if !had_pending && !buffer.windows(delimiter.len()).any(|part| part == delimiter) {
+                            return Ok(Some(std::mem::take(buffer)));
+                        }
                     }
                 }
 
@@ -307,7 +339,7 @@ impl FlowNodeBehavior for TcpInNode {
                     Ok(stream) => {
                         let mut counter = connection_counter.lock().await;
                         *counter += 1;
-                        let session_id = format!("tcp_client_{}_{}", remote_addr.replace(':', "_"), *counter);
+                        let session_id = format!("tcp_client_{}_{}", self.id(), *counter);
                         drop(counter);
 
                         log::info!("TCP in: Connected to {remote_addr}");

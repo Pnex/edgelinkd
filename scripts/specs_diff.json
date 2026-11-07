@@ -13,6 +13,31 @@
                 "test/nodes/core/common/25-catch_spec.js"
             ],
             [
+                "debug",
+                "nodes/common/test_debug_node.py",
+                "test/nodes/core/common/21-debug_spec.js"
+            ],
+            [
+                "status",
+                "nodes/common/test_status_node.py",
+                "test/nodes/core/common/25-status_spec.js"
+            ],
+            [
+                "comment",
+                "nodes/common/test_comment_node.py",
+                "test/nodes/core/common/90-comment_spec.js"
+            ],
+            [
+                "global-config",
+                "nodes/common/test_global_config_node.py",
+                "test/nodes/core/common/91-global-config_spec.js"
+            ],
+            [
+                "unknown",
+                "nodes/common/test_unknown_node.py",
+                "test/nodes/core/common/98-unknown_spec.js"
+            ],
+            [
                 "link",
                 "nodes/common/test_link_nodes.py",
                 "test/nodes/core/common/60-link_spec.js"
@@ -73,7 +98,7 @@
         "category": "sequence nodes",
         "nodes": [
             [
-                "spilt node",
+                "split / join nodes",
                 "nodes/sequence/test_split_node.py",
                 "test/nodes/core/sequence/17-split_spec.js"
             ],
@@ -93,6 +118,11 @@
         "category": "network nodes",
         "nodes": [
             [
+                "tcp in",
+                "nodes/network/test_tcpin_node.py",
+                "test/nodes/core/network/31-tcpin_spec.js"
+            ],
+            [
                 "tcp request",
                 "nodes/network/test_tcprequest_node.py",
                 "test/nodes/core/network/31-tcprequest_spec.js"
@@ -101,6 +131,21 @@
                 "udp out",
                 "nodes/network/test_udpout_node.py",
                 "test/nodes/core/network/32-udpout_spec.js"
+            ],
+            [
+                "mqtt node",
+                "nodes/network/test_mqtt_node.py",
+                "test/nodes/core/network/21-mqtt_spec.js"
+            ],
+            [
+                "http request",
+                "nodes/network/test_httprequest_node.py",
+                "test/nodes/core/network/21-httprequest_spec.js"
+              ],
+              [
+                  "websocket",
+                  "nodes/network/test_websocket_node.py",
+                  "test/nodes/core/network/22-websocket_spec.js"
             ]
         ]
     },
@@ -126,6 +171,11 @@
                 "yaml node",
                 "nodes/parsers/test_yaml_node.py",
                 "test/nodes/core/parsers/70-YAML_spec.js"
+            ],
+            [
+                "html node",
+                "nodes/parsers/test_html_node.py",
+                "test/nodes/core/parsers/70-HTML_spec.js"
             ]
         ]
     },

@@ -149,6 +149,7 @@ pub fn load_flows_json_value(root_jv: JsonValue) -> crate::Result<ResolvedFlows>
 
         for (i, flow_node_jv) in owned_node_jvs.into_iter().enumerate() {
             let mut node_config: RedFlowNodeConfig = serde_json::from_value(flow_node_jv.clone())?;
+            node_config.red_id = flow_node_jv.get("id").and_then(JsonValue::as_str).unwrap_or_default().to_owned();
             node_config.ordering = i;
             flow_config.nodes.push(node_config);
         }
@@ -358,7 +359,7 @@ pub fn parse_red_id_str(id_str: &str) -> Option<ElementId> {
         return Some(element_id);
     }
 
-    log::warn!("Failed to parse ID '{id_str}' as hex, converting to hash");
+    log::info!("Mapping Node-RED ID '{id_str}' to an internal numeric ID");
 
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -672,7 +673,7 @@ where
         where
             E: de::Error,
         {
-            if value.trim().is_empty() { Ok(f64::NAN) } else { value.parse::<f64>().map_err(de::Error::custom) }
+            if value.trim().is_empty() { Ok(<f64>::NAN) } else { value.parse::<f64>().map_err(de::Error::custom) }
         }
 
         fn visit_string<E>(self, value: String) -> Result<f64, E>

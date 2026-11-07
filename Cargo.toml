@@ -1,6 +1,6 @@
 [package]
 name = "edgelink-app"
-version = "0.1.99"
+version.workspace = true
 edition = "2021"
 rust-version = "1.88"
 readme = "README.md"
@@ -106,6 +106,7 @@ log4rs = { version = "1", features = [
 ctor = "^0.2"
 sha2 = "0.10"
 hex = "0.4"
+encoding_rs = "0.8"
 reqwest = { version = "0.11", features = [
     "json",
     "rustls-tls",
@@ -115,6 +116,7 @@ tokio-tungstenite = { version = "0.26.2", features = [
 ] }
 serde-xml-rs = { version = "0.8.1" }
 quick-xml = { version = "0.39", features = ["serialize"] }
+scraper = "0.22"
 axum = { version = "0.8.4", default-features = false, features = [
     "http1",
     "json",
@@ -157,16 +159,22 @@ chrono = { workspace = true }
 
 [workspace]
 members = ["crates/*", "node-plugins/*"]
+resolver = "2"
+
+[workspace.package]
+version = "4.1.16"
 
 [package.metadata.bundle]
 identifier = "com.github.oldrev.edgelink"
 
 [features]
 full = ["default", "rqjs_bindgen"]
-default = ["core", "js", "jsonata", "nodes_network", "nodes_storage"]
+default = ["core", "metrics", "js", "jsonata", "nodes_network", "nodes_storage", "nodes_parser"]
 core = ["edgelink-core/core"]
+metrics = ["edgelink-core/metrics"]
 js = ["edgelink-core/js"]
 jsonata = ["edgelink-core/jsonata"]
 nodes_network = ["edgelink-core/nodes_network"]
 nodes_storage = ["edgelink-core/nodes_storage"]
+nodes_parser = ["edgelink-core/nodes_parser"]
 rqjs_bindgen = ["js", "edgelink-core/rqjs_bindgen"]

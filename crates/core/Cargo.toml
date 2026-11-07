@@ -1,6 +1,6 @@
 [package]
 name = "edgelink-core"
-version = "0.1.99"
+version.workspace = true
 edition = "2024"
 readme = "README.md"
 authors = ["Li Wei <oldrev@gmail.com>"]
@@ -47,6 +47,7 @@ serde_with.workspace = true
 bincode.workspace = true
 sha2.workspace = true
 hex.workspace = true
+encoding_rs.workspace = true
 # Template engine and YAML support
 mustache = "0.9.0"
 serde_yaml_ng = { version = "0.10.0", optional = true }
@@ -56,6 +57,7 @@ urlencoding = { version = "2.1", optional = true }
 url = "2.5"
 # XML parsing
 quick-xml = { workspace = true, optional = true, features = ["serialize"] }
+scraper = { workspace = true, optional = true }
 serde-xml-rs = { workspace = true, optional = true }
 # Crates in this project
 edgelink-macro = { path = "../macro" }
@@ -87,15 +89,16 @@ futures.workspace = true
 
 
 [features]
-default = ["core", "js", "jsonata", "nodes_network", "nodes_storage", "nodes_parser"]
+default = ["core", "metrics", "js", "jsonata", "nodes_network", "nodes_storage", "nodes_parser"]
 core = []
+metrics = []
 pymod = []
 #js = ["rquickjs", "rquickjs-extra", "llrt_modules"]
 js = ["rquickjs", "rquickjs-extra"]
 jsonata = ["jsonata-core"]
 rqjs_bindgen = ["js", "rquickjs/bindgen"]
 nodes_network = ["nodes_mqtt", "nodes_udp", "nodes_tcp", "nodes_http", "nodes_websocket"]
-nodes_parser = ["nodes_xml", "nodes_yaml"]
+nodes_parser = ["nodes_xml", "nodes_yaml", "scraper"]
 nodes_storage = ["nodes_storage_watch"]
 nodes_mqtt = ["rumqttc"]
 nodes_http = ["tokio/net", "reqwest", "urlencoding"]

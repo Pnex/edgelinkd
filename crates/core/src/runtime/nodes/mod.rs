@@ -1,5 +1,9 @@
 use std::fmt;
+#[cfg(feature = "metrics")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 use async_trait::async_trait;
 use runtime::engine::Engine;
@@ -16,12 +20,14 @@ use crate::EdgelinkError;
 use crate::runtime::flow::*;
 use crate::runtime::model::json::{RedFlowNodeConfig, RedGlobalNodeConfig};
 use crate::runtime::model::*;
+use crate::runtime::node_log_channel::NodeLogMessage;
 use crate::runtime::red_env::*;
 use crate::*;
 
 pub(crate) mod common_nodes;
 mod function_nodes;
 
+#[cfg(feature = "nodes_parser")]
 mod parser_nodes;
 mod sequence_nodes;
 
@@ -29,11 +35,12 @@ mod sequence_nodes;
 mod storage_nodes;
 
 #[cfg(feature = "nodes_network")]
-mod network_nodes;
+pub mod network_nodes;
 
 pub mod wellknown_names {
     pub const UNKNOWN_GLOBAL_NODE: &str = "unknown.global";
     pub const UNKNOWN_FLOW_NODE: &str = "unknown";
+    pub const GLOBAL_CONFIG_NODE: &str = "global-config";
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +93,7 @@ pub struct MetaNode {
     pub red_id: &'static str,   // Like "node-red/inject"
     pub red_name: &'static str, // Like "inject"
     pub module: &'static str,   // Like "node-red"
-    pub version: &'static str,  // Like"4.0.9"
+    pub version: &'static str,  // Like "4.1.16"
     pub local: bool,            // Default: false
     pub user: bool,             // Default: false
 }
@@ -94,6 +101,7 @@ pub struct MetaNode {
 #[derive(Debug)]
 pub struct BaseFlowNodeState {
     pub id: ElementId,
+    pub red_id: String,
     pub name: String,
     pub type_str: &'static str,
     pub ordering: usize,
@@ -109,6 +117,115 @@ pub struct BaseFlowNodeState {
     pub on_received: MsgEventSender,
     pub on_completed: MsgEventSender,
     pub on_error: MsgEventSender,
+    pub metrics: NodeMetrics,
+}
+
+/// Low-overhead counters shared by every flow node.
+///
+/// The counters describe runtime activity rather than node-specific semantics: a message is
+/// received when it leaves the node input queue, and a wire is delivered only after its send
+/// succeeds. This keeps the numbers comparable across node implementations.
+#[derive(Debug, Default)]
+pub struct NodeMetrics {
+    #[cfg(feature = "metrics")]
+    received: AtomicU64,
+    #[cfg(feature = "metrics")]
+    completed: AtomicU64,
+    #[cfg(feature = "metrics")]
+    errors: AtomicU64,
+    #[cfg(feature = "metrics")]
+    emitted_messages: AtomicU64,
+    #[cfg(feature = "metrics")]
+    delivered_wires: AtomicU64,
+    #[cfg(feature = "metrics")]
+    dropped: AtomicU64,
+    #[cfg(feature = "metrics")]
+    processing_nanos: AtomicU64,
+    #[cfg(feature = "metrics")]
+    in_flight: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NodeMetricsSnapshot {
+    pub received: u64,
+    pub completed: u64,
+    pub errors: u64,
+    pub emitted_messages: u64,
+    pub delivered_wires: u64,
+    pub dropped: u64,
+    pub processing_nanos: u64,
+    pub in_flight: u64,
+}
+
+impl NodeMetrics {
+    pub fn snapshot(&self) -> NodeMetricsSnapshot {
+        #[cfg(feature = "metrics")]
+        {
+            NodeMetricsSnapshot {
+                received: self.received.load(Ordering::Relaxed),
+                completed: self.completed.load(Ordering::Relaxed),
+                errors: self.errors.load(Ordering::Relaxed),
+                emitted_messages: self.emitted_messages.load(Ordering::Relaxed),
+                delivered_wires: self.delivered_wires.load(Ordering::Relaxed),
+                dropped: self.dropped.load(Ordering::Relaxed),
+                processing_nanos: self.processing_nanos.load(Ordering::Relaxed),
+                in_flight: self.in_flight.load(Ordering::Relaxed),
+            }
+        }
+        #[cfg(not(feature = "metrics"))]
+        {
+            NodeMetricsSnapshot::default()
+        }
+    }
+
+    fn received(&self) {
+        #[cfg(feature = "metrics")]
+        {
+            self.received.fetch_add(1, Ordering::Relaxed);
+            self.in_flight.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn completed(&self) {
+        #[cfg(feature = "metrics")]
+        {
+            self.completed.fetch_add(1, Ordering::Relaxed);
+            self.finish_in_flight();
+        }
+    }
+
+    fn error(&self) {
+        #[cfg(feature = "metrics")]
+        {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            self.finish_in_flight();
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn finish_in_flight(&self) {
+        let _ = self.in_flight.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| Some(value.saturating_sub(1)));
+    }
+
+    #[cfg(feature = "metrics")]
+    fn processing_time(&self, elapsed: std::time::Duration) {
+        self.processing_nanos.fetch_add(elapsed.as_nanos().min(u64::MAX as u128) as u64, Ordering::Relaxed);
+    }
+
+    fn emitted(&self) {
+        #[cfg(feature = "metrics")]
+        self.emitted_messages.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn delivered(&self) {
+        #[cfg(feature = "metrics")]
+        self.delivered_wires.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn dropped(&self) {
+        #[cfg(feature = "metrics")]
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[derive(Debug)]
@@ -121,6 +238,65 @@ pub struct BaseGlobalNodeState {
     pub disabled: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct MqttBrokerSettings {
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub tls: bool,
+    pub keepalive: u16,
+    pub clean: bool,
+    pub client_id: Option<String>,
+    pub auto_connect: bool,
+    pub protocol_version: u8,
+    pub will_topic: Option<String>,
+    pub will_payload: Option<String>,
+    pub will_qos: u8,
+    pub will_retain: bool,
+    pub will_content_type: Option<String>,
+    pub will_response_topic: Option<String>,
+    pub will_correlation_data: Option<Vec<u8>>,
+    pub will_message_expiry_interval: Option<u32>,
+    pub will_payload_format_indicator: Option<u8>,
+    pub will_user_properties: Vec<(String, String)>,
+    pub birth_topic: Option<String>,
+    pub birth_payload: Option<String>,
+    pub birth_qos: u8,
+    pub birth_retain: bool,
+    pub close_topic: Option<String>,
+    pub close_payload: Option<String>,
+    pub close_qos: u8,
+    pub close_retain: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MqttBrokerMessage {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: u8,
+    pub retain: bool,
+    pub v5_properties: Option<MqttBrokerPublishProperties>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MqttBrokerPublishProperties {
+    pub payload_format_indicator: Option<u8>,
+    pub message_expiry_interval: Option<u32>,
+    pub response_topic: Option<String>,
+    pub correlation_data: Option<Vec<u8>>,
+    pub user_properties: Vec<(String, String)>,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MqttSubscriptionOptions {
+    pub no_local: bool,
+    pub retain_as_published: bool,
+    pub retain_handling: u8,
+    pub subscription_identifier: Option<u32>,
+}
+
 pub trait ScopedNodeBehavior {
     fn get_scope(&self) -> &FlowNodeScope;
 }
@@ -128,11 +304,74 @@ pub trait ScopedNodeBehavior {
 #[async_trait]
 pub trait GlobalNodeBehavior: Send + Sync + FlowsElement {
     fn get_base(&self) -> &BaseGlobalNodeState;
+
+    /// Start resources owned by a configuration node before flow tasks run.
+    async fn start(self: Arc<Self>, _cancel: CancellationToken) -> crate::Result<()> {
+        Ok(())
+    }
+
+    /// Release resources owned by a configuration node after flow tasks stop.
+    async fn stop(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn mqtt_settings(&self) -> Option<MqttBrokerSettings> {
+        None
+    }
+
+    async fn mqtt_register_user(
+        &self,
+        _user_id: ElementId,
+        _sender: tokio::sync::mpsc::UnboundedSender<MqttBrokerMessage>,
+    ) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker users are unavailable".to_owned()).into())
+    }
+
+    async fn mqtt_subscribe_user(
+        &self,
+        _user_id: ElementId,
+        _topic: &str,
+        _qos: u8,
+        _options: MqttSubscriptionOptions,
+    ) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker subscriptions are unavailable".to_owned()).into())
+    }
+
+    async fn mqtt_unregister_user(&self, _user_id: ElementId) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker users are unavailable".to_owned()).into())
+    }
+
+    async fn mqtt_unsubscribe_user(&self, _user_id: ElementId, _topic: &str) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker subscriptions are unavailable".to_owned()).into())
+    }
+
+    async fn mqtt_connect(&self) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker connection is unavailable".to_owned()).into())
+    }
+
+    async fn mqtt_disconnect(&self) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker connection is unavailable".to_owned()).into())
+    }
+
+    async fn mqtt_publish(
+        &self,
+        _topic: &str,
+        _qos: u8,
+        _retain: bool,
+        _payload: Vec<u8>,
+        _properties: Option<MqttBrokerPublishProperties>,
+    ) -> crate::Result<()> {
+        Err(crate::EdgelinkError::NotSupported("MQTT shared broker publishing is unavailable".to_owned()).into())
+    }
 }
 
 #[async_trait]
 pub trait FlowNodeBehavior: Send + Sync + FlowsElement {
     fn get_base(&self) -> &BaseFlowNodeState;
+
+    fn metrics(&self) -> NodeMetricsSnapshot {
+        self.get_base().metrics.snapshot()
+    }
 
     async fn run(self: Arc<Self>, stop_token: CancellationToken);
 
@@ -165,6 +404,7 @@ pub trait FlowNodeBehavior: Send + Sync + FlowsElement {
 
     async fn recv_msg(&self, stop_token: CancellationToken) -> crate::Result<MsgHandle> {
         let msg = self.get_base().msg_rx.recv_msg(stop_token).await?;
+        self.get_base().metrics.received();
         if self.get_base().on_received.receiver_count() > 0 {
             self.get_base().on_received.send(msg.clone())?;
         }
@@ -172,6 +412,7 @@ pub trait FlowNodeBehavior: Send + Sync + FlowsElement {
     }
 
     async fn notify_uow_completed(&self, msg: MsgHandle, cancel: CancellationToken) {
+        self.get_base().metrics.completed();
         let (node_id, flow) = { (self.id(), self.get_base().flow.upgrade()) };
         if let Some(flow) = flow {
             flow.notify_node_uow_completed(&node_id, msg, cancel).await;
@@ -202,8 +443,15 @@ pub trait FlowNodeBehavior: Send + Sync + FlowsElement {
         for wire in port.wires.iter() {
             let msg_to_send = if msg_sent { envelope.msg.deep_clone(true).await } else { envelope.msg.clone() };
 
-            wire.tx(msg_to_send, cancel.clone()).await?;
+            if let Err(err) = wire.tx(msg_to_send, cancel.clone()).await {
+                self.get_base().metrics.dropped();
+                return Err(err);
+            }
+            self.get_base().metrics.delivered();
             msg_sent = true;
+        }
+        if msg_sent {
+            self.get_base().metrics.emitted();
         }
         Ok(())
     }
@@ -280,6 +528,26 @@ pub trait FlowNodeBehavior: Send + Sync + FlowsElement {
     fn on_loaded(&self) {}
 
     async fn on_starting(&self) {}
+
+    /// Publish a structured node log event (`node.log()`/`node.warn()`/... in a node's own terms).
+    ///
+    /// Node-RED records these as `{level, id, type, msg, path}` and its mocha helper exposes them as
+    /// `helper.log()`, which is what the ported specs assert on; the editor's console view shows the
+    /// same data. The human-readable line is written separately through the `log` crate.
+    fn publish_node_log(&self, level: &str, msg: String) {
+        if let Some(flow) = self.flow()
+            && let Some(engine) = flow.engine()
+        {
+            engine.node_log_channel().send(NodeLogMessage {
+                id: self.id(),
+                name: self.name().to_owned(),
+                node_type: self.type_str().to_owned(),
+                level: level.to_owned(),
+                msg,
+                path: flow.get_path(),
+            });
+        }
+    }
 }
 
 impl dyn GlobalNodeBehavior {
@@ -336,20 +604,33 @@ where
 {
     match node.recv_msg(cancel.clone()).await {
         Ok(msg) => {
-            if let Err(ref err) = proc(node, msg.clone()).await {
-                let flow = node.flow().expect("flow");
-                let error_message = err.to_string();
+            #[cfg(feature = "metrics")]
+            let started = Instant::now();
+            let result = proc(node, msg.clone()).await;
+            #[cfg(feature = "metrics")]
+            node.get_base().metrics.processing_time(started.elapsed());
+            match result {
+                Ok(()) => {
+                    // Report the completion
+                    node.notify_uow_completed(msg, cancel.clone()).await;
+                }
+                Err(ref err) => {
+                    node.get_base().metrics.error();
+                    let flow = node.flow().expect("flow");
+                    let error_message = err.to_string();
 
-                match flow.handle_error(node, &error_message, Some(msg.clone()), None, cancel.clone()).await {
-                    Ok(_) => (),
-                    Err(e) => {
-                        log::error!("Failed to handle error: {e:?}");
+                    match flow.handle_error(node, &error_message, Some(msg.clone()), None, cancel.clone()).await {
+                        Ok(_) => (),
+                        Err(e) => {
+                            log::error!("Failed to handle error: {e:?}");
+                        }
                     }
+
+                    // A failed unit of work is an error, not a completion: Node-RED's `done(err)`
+                    // emits the error event (which is what `catch` nodes receive) and does *not*
+                    // emit the complete event a `complete` node listens for.
                 }
             }
-
-            // Report the completion
-            node.notify_uow_completed(msg, cancel.clone()).await;
         }
         Err(ref err) => {
             if let Some(EdgelinkError::TaskCancelled) = err.downcast_ref::<EdgelinkError>() {
@@ -585,6 +866,7 @@ mod tests {
 
         let base = BaseFlowNodeState {
             id: ElementId::new(),
+            red_id: String::new(),
             name: "fan-out-test".to_owned(),
             type_str: "fan-out-test",
             ordering: 0,
@@ -599,6 +881,7 @@ mod tests {
             on_received: MsgEventSender::new(1),
             on_completed: MsgEventSender::new(1),
             on_error: MsgEventSender::new(1),
+            metrics: NodeMetrics::default(),
         };
 
         Arc::new(FanOutTestNode { base })
@@ -664,6 +947,16 @@ mod tests {
 
         assert_eq!(payload_of(rx0.recv().await.unwrap()).await, Variant::from("port-0"));
         assert_eq!(payload_of(rx1.recv().await.unwrap()).await, Variant::from("port-1"));
+
+        let metrics = node.metrics();
+        #[cfg(feature = "metrics")]
+        {
+            assert_eq!(metrics.emitted_messages, 2);
+            assert_eq!(metrics.delivered_wires, 2);
+            assert_eq!(metrics.dropped, 0);
+        }
+        #[cfg(not(feature = "metrics"))]
+        assert_eq!(metrics, NodeMetricsSnapshot::default());
     }
 
     /// An out-of-range port index must still be reported as an error.
